@@ -49,8 +49,8 @@ void VOFeatureTrackingPipeline::trackFeaturesNFrame(
     aslam::VisualNFrame* nframe_k,
     aslam::FrameToFrameMatchesList* inlier_matches_kp1_k,
     aslam::FrameToFrameMatchesList* outlier_matches_kp1_k) {
-  CHECK_NOTNULL(nframe_kp1);
-  CHECK_NOTNULL(nframe_k);
+  CHECK_NOTNULL(nframe_kp1);//当前帧信息
+  CHECK_NOTNULL(nframe_k);//过去帧信息
   CHECK_NOTNULL(inlier_matches_kp1_k)->clear();
   CHECK_NOTNULL(outlier_matches_kp1_k)->clear();
   CHECK_GT(
@@ -72,6 +72,7 @@ void VOFeatureTrackingPipeline::trackFeaturesNFrame(
     aslam::VisualFrame* frame_kp1 =
         nframe_kp1->getFrameShared(camera_idx).get();
     aslam::VisualFrame* frame_k = nframe_k->getFrameShared(camera_idx).get();
+    //好像就是开启了一个多线程，针对多个相机使用，主要是看函数trackFeatureSingleCamera
     thread_pool_->enqueue(
         &VOFeatureTrackingPipeline::trackFeaturesSingleCamera, this, q_Bkp1_Bk,
         camera_idx, frame_kp1, frame_k, &(*inlier_matches_kp1_k)[camera_idx],
@@ -82,6 +83,8 @@ void VOFeatureTrackingPipeline::trackFeaturesNFrame(
   timer_eval.Stop();
 }
 
+    //函数做的就是提取特征点并匹配前后两帧之间的特征点
+    /*
 void VOFeatureTrackingPipeline::trackFeaturesSingleCamera(
     const aslam::Quaternion& q_Bkp1_Bk, const size_t camera_idx,
     aslam::VisualFrame* frame_kp1, aslam::VisualFrame* frame_k,
@@ -103,8 +106,10 @@ void VOFeatureTrackingPipeline::trackFeaturesSingleCamera(
   }
   detectors_extractors_[camera_idx]->detectAndExtractFeatures(frame_kp1);
 
+  //将特征点和图像信息传到Rviz中显示的
   if (FLAGS_detection_visualize_keypoints) {
     cv::Mat image;
+    //将灰度图转成彩色图
     cv::cvtColor(frame_kp1->getRawImage(), image, cv::COLOR_GRAY2BGR);
 
     aslam_cv_visualization::drawKeypoints(*CHECK_NOTNULL(frame_kp1), &image);
@@ -120,6 +125,7 @@ void VOFeatureTrackingPipeline::trackFeaturesSingleCamera(
 
   // Get the relative motion of the camera using the extrinsics of the camera
   // system.
+  //q_C_B应该是imu坐标系转到相机坐标系的旋转
   const aslam::Quaternion& q_C_B =
       ncamera_->get_T_C_B(camera_idx).getRotation();
   aslam::Quaternion q_Ckp1_Ck = q_C_B * q_Bkp1_Bk * q_C_B.inverse();
@@ -128,6 +134,7 @@ void VOFeatureTrackingPipeline::trackFeaturesSingleCamera(
   timing::Timer timer_tracking("descriptor matching");
   aslam::FrameToFrameMatchesWithScore matches_with_score_kp1_k;
 
+  //这个函数存在于feature-tracker-gyro.h中，根据imu的旋转来做两帧之间的特征点匹配，存入matches_with_score_kp1_k中
   trackers_[camera_idx]->track(
       q_Ckp1_Ck, *frame_k, frame_kp1, &matches_with_score_kp1_k);
   stat_tracking.AddSample(timer_tracking.Stop() * 1000);
@@ -139,6 +146,7 @@ void VOFeatureTrackingPipeline::trackFeaturesSingleCamera(
   statistics::StatsCollector stat_ransac("Twopt RANSAC (1 image) in ms");
   timing::Timer timer_ransac(
       "swe-feature-tracker: trackFeaturesSingleCamera - ransac");
+  //利用Ransac删选内点
   bool ransac_success = aslam::geometric_vision::
       rejectOutlierFeatureMatchesTranslationRotationSAC(
           *frame_kp1, *frame_k, q_Ckp1_Ck, matches_with_score_kp1_k,
@@ -160,8 +168,10 @@ void VOFeatureTrackingPipeline::trackFeaturesSingleCamera(
   // Assign track ids.
   timing::Timer timer_track_manager(
       "swe-feature-tracker: trackFeaturesSingleCamera - track manager");
+  //
   track_managers_[camera_idx]->applyMatchesToFrames(
       inlier_matches_with_score_kp1_k, frame_kp1, frame_k);
+
 
   aslam::convertMatchesWithScoreToMatches<aslam::FrameToFrameMatchWithScore,
                                           aslam::FrameToFrameMatch>(
@@ -189,6 +199,47 @@ void VOFeatureTrackingPipeline::trackFeaturesSingleCamera(
   }
   timer_track_manager.Stop();
 }
+*/
+/*只读入图像，不用imu数据（change:11）*/
+    void VOFeatureTrackingPipeline::trackFeaturesSingleCamera(
+            const aslam::Quaternion& q_Bkp1_Bk, const size_t camera_idx,
+            aslam::VisualFrame* frame_kp1, aslam::VisualFrame* frame_k,
+            aslam::FrameToFrameMatches* inlier_matches_kp1_k,
+            aslam::FrameToFrameMatches* outlier_matches_kp1_k) {
+      timing::Timer timer("swe-feature-tracker: trackFeaturesSingleCamera");
+      CHECK_LE(camera_idx, track_managers_.size());
+      CHECK_NOTNULL(frame_k);
+      CHECK_NOTNULL(frame_kp1);
+      CHECK_NOTNULL(inlier_matches_kp1_k);
+      CHECK_NOTNULL(outlier_matches_kp1_k);
+      inlier_matches_kp1_k->clear();
+      outlier_matches_kp1_k->clear();
+
+      // Initialize keypoints and descriptors in frame_k, if there aren't any.
+      if (!has_feature_extraction_been_performed_on_first_nframe_) {
+        detectors_extractors_[camera_idx]->detectAndExtractFeatures(frame_k);
+        has_feature_extraction_been_performed_on_first_nframe_ = true;
+      }
+      detectors_extractors_[camera_idx]->detectAndExtractFeatures(frame_kp1);
+
+      //将特征点和图像信息传到Rviz中显示的
+      if (FLAGS_detection_visualize_keypoints) {
+        cv::Mat image;
+        //将灰度图转成彩色图
+        cv::cvtColor(frame_kp1->getRawImage(), image, cv::COLOR_GRAY2BGR);
+
+        aslam_cv_visualization::drawKeypoints(*CHECK_NOTNULL(frame_kp1), &image);
+        const std::string topic = feature_tracking_ros_base_topic_ +
+                                  "/keypoints_raw_cam" + std::to_string(camera_idx);
+        visualization::RVizVisualizationSink::publish(topic, image);
+      }
+
+      CHECK(frame_k->hasKeypointMeasurements());
+      CHECK(frame_k->hasDescriptors());
+      CHECK(frame_kp1->hasKeypointMeasurements());
+      CHECK(frame_kp1->hasDescriptors());
+
+    }
 
 void VOFeatureTrackingPipeline::initialize(
     const aslam::NCamera::ConstPtr& ncamera) {

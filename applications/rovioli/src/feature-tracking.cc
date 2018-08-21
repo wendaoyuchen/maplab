@@ -1,6 +1,8 @@
 #include "rovioli/feature-tracking.h"
+#include "../include/rovioli/feature-tracking.h"
 
 #include <maplab-common/conversions.h>
+#include <iostream>
 
 namespace rovioli {
 
@@ -15,6 +17,19 @@ FeatureTracking::FeatureTracking(
   CHECK(camera_system_ != nullptr);
 }
 
+/*只读入图像，不用imu数据（change:9）*/
+FeatureTracking::FeatureTracking(
+        const aslam::NCamera::Ptr& camera_system, bool Isimu)
+        : camera_system_(camera_system),
+          Isimu_(Isimu),
+          current_imu_bias_(Eigen::Matrix<double, 6, 1>::Zero()),
+          current_imu_bias_timestamp_nanoseconds_(aslam::time::getInvalidTime()),
+          previous_nframe_timestamp_ns_(-1),
+          tracker_(camera_system) {
+  CHECK(camera_system_ != nullptr);
+}
+
+    /*只读入图像，不用imu数据（change:10）*/
 bool FeatureTracking::trackSynchronizedNFrameImuCallback(
     const vio::SynchronizedNFrameImu::Ptr& synced_nframe_imu) {
   CHECK(synced_nframe_imu != nullptr);
@@ -29,36 +44,56 @@ bool FeatureTracking::trackSynchronizedNFrameImuCallback(
     return false;
   }
 
+  std::cerr << "feature-tracking.cc:47 "<<"tracked_flow has accepted synced_nframe_imu."   <<std::endl;
   // Check if the IMU bias is up to date, if not - use zero.
-  if (!hasUpToDateImuBias(
-          synced_nframe_imu->nframe->getMinTimestampNanoseconds())) {
-    LOG(WARNING) << "No bias from the estimator available. Assuming zero bias.";
+  if(!Isimu_){
     std::unique_lock<std::mutex> bias_lock(m_current_imu_bias_);
     current_imu_bias_.setZero();
+    aslam::Quaternion q_Ikp1_Ik;
+    aslam::FrameToFrameMatchesList inlier_matches_kp1_k;
+    aslam::FrameToFrameMatchesList outlier_matches_kp1_k;
+    CHECK_GT(
+            synced_nframe_imu->nframe->getMinTimestampNanoseconds(),
+            previous_synced_nframe_imu_->nframe->getMinTimestampNanoseconds());
+    tracker_.trackFeaturesNFrame(
+            q_Ikp1_Ik, synced_nframe_imu->nframe.get(),
+            previous_synced_nframe_imu_->nframe.get(), &inlier_matches_kp1_k,
+            &outlier_matches_kp1_k);
+
+    previous_synced_nframe_imu_ = synced_nframe_imu;
+    return true;
   }
+  else if (!hasUpToDateImuBias(
+          synced_nframe_imu->nframe->getMinTimestampNanoseconds())) {
+              LOG(WARNING) << "No bias from the estimator available. Assuming zero bias.";
+              std::unique_lock<std::mutex> bias_lock(m_current_imu_bias_);
+              current_imu_bias_.setZero();
+  }
+      // Preintegrate the IMU measurements.
+      aslam::Quaternion q_Ikp1_Ik;
+      integrateInterframeImuRotation(
+              synced_nframe_imu->imu_timestamps, synced_nframe_imu->imu_measurements,
+              &q_Ikp1_Ik);
 
-  // Preintegrate the IMU measurements.
-  aslam::Quaternion q_Ikp1_Ik;
-  integrateInterframeImuRotation(
-      synced_nframe_imu->imu_timestamps, synced_nframe_imu->imu_measurements,
-      &q_Ikp1_Ik);
+      CHECK(previous_synced_nframe_imu_ != nullptr);
+      aslam::FrameToFrameMatchesList inlier_matches_kp1_k;
+      aslam::FrameToFrameMatchesList outlier_matches_kp1_k;
+      CHECK_GT(
+              synced_nframe_imu->nframe->getMinTimestampNanoseconds(),
+              previous_synced_nframe_imu_->nframe->getMinTimestampNanoseconds());
+      tracker_.trackFeaturesNFrame(
+              q_Ikp1_Ik, synced_nframe_imu->nframe.get(),
+              previous_synced_nframe_imu_->nframe.get(), &inlier_matches_kp1_k,
+              &outlier_matches_kp1_k);
 
-  CHECK(previous_synced_nframe_imu_ != nullptr);
-  aslam::FrameToFrameMatchesList inlier_matches_kp1_k;
-  aslam::FrameToFrameMatchesList outlier_matches_kp1_k;
-  CHECK_GT(
-      synced_nframe_imu->nframe->getMinTimestampNanoseconds(),
-      previous_synced_nframe_imu_->nframe->getMinTimestampNanoseconds());
-  tracker_.trackFeaturesNFrame(
-      q_Ikp1_Ik, synced_nframe_imu->nframe.get(),
-      previous_synced_nframe_imu_->nframe.get(), &inlier_matches_kp1_k,
-      &outlier_matches_kp1_k);
-
-  previous_synced_nframe_imu_ = synced_nframe_imu;
-  return true;
+      previous_synced_nframe_imu_ = synced_nframe_imu;
+      return true;
 }
 
-void FeatureTracking::setCurrentImuBias(
+
+
+
+void FeatureTracking::setCurrentImuBias(//运行rovioli时终端并未输出下面结果，但是rovio开启的显示画面窗口是存在的
     const RovioEstimate::ConstPtr& rovio_estimate) {
   CHECK(rovio_estimate != nullptr);
 

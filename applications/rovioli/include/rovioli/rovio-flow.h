@@ -23,7 +23,7 @@ class RovioFlow {
   void processRovioUpdate(const rovio::RovioState& state);
 
  private:
-  std::unique_ptr<rovio::RovioInterface> rovio_interface_;
+  std::unique_ptr<rovio::RovioInterface> rovio_interface_; // RovioInterface 里面定义的都是虚函数，实际上这个对象属于RovioInterfaceImpl类
   std::function<void(const RovioEstimate::ConstPtr&)> publish_rovio_estimates_;
 
   // Indicates if the camera at the corresponding index should be used for

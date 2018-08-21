@@ -18,6 +18,11 @@ class ImuCameraSynchronizerFlow {
     CHECK(camera_system);
   }
 
+  ImuCameraSynchronizerFlow(const aslam::NCamera::Ptr& camera_system, bool Isimu)
+          : synchronizing_pipeline_(camera_system,Isimu) {
+      CHECK(camera_system);
+  }
+
   ~ImuCameraSynchronizerFlow() {
     shutdown();
   }
@@ -50,6 +55,37 @@ class ImuCameraSynchronizerFlow {
     synchronizing_pipeline_.registerSynchronizedNFrameImuCallback(
         flow->registerPublisher<message_flow_topics::SYNCED_NFRAMES_AND_IMU>());
   }
+
+/*只读入图像，不用imu数据（change:6）*/
+void attachToMessageFlow(message_flow::MessageFlow* flow ,bool Isimu) {
+    CHECK_NOTNULL(flow);
+    static constexpr char kSubscriberNodeName[] = "ImuCameraSynchronizerFlow";
+
+    // Image input.
+    flow->registerSubscriber<message_flow_topics::IMAGE_MEASUREMENTS>(
+            kSubscriberNodeName, message_flow::DeliveryOptions(),
+            [this](const vio::ImageMeasurement::Ptr& image) {
+                CHECK(image);
+                this->synchronizing_pipeline_.addCameraImage(
+                        image->camera_index, image->image, image->timestamp);
+            });
+    // IMU input.
+    if(Isimu)
+        flow->registerSubscriber<message_flow_topics::IMU_MEASUREMENTS>(
+            kSubscriberNodeName, message_flow::DeliveryOptions(),
+            [this](const vio::ImuMeasurement::Ptr& imu) {
+                CHECK(imu);
+                // TODO(schneith): This seems inefficient. Should we batch IMU
+                // measurements on the datasource side?
+                this->synchronizing_pipeline_.addImuMeasurements(
+                        (Eigen::Matrix<int64_t, 1, 1>() << imu->timestamp).finished(),
+                        imu->imu_data);
+            });
+
+    // Tracked nframes and IMU output.
+    synchronizing_pipeline_.registerSynchronizedNFrameImuCallback(
+            flow->registerPublisher<message_flow_topics::SYNCED_NFRAMES_AND_IMU>());
+}
 
   void shutdown() {
     synchronizing_pipeline_.shutdown();

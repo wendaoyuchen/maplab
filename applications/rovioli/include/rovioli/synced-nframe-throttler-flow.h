@@ -30,6 +30,7 @@ class SyncedNFrameThrottlerFlow {
           const bool should_publish =
               this->throttler_.shouldPublishNFrame(nframe_imu);
           if (should_publish) {
+              std::cerr << "synced-nframe-throttler-flow.h:33 "<<"throttler-flow has published the nframe_imu"<<std::endl;
             publish_result(nframe_imu);
           }
         });

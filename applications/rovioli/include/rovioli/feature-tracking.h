@@ -24,6 +24,9 @@ class FeatureTracking {
   explicit FeatureTracking(
       const aslam::NCamera::Ptr& camera_system, const vi_map::Imu& imu_sensor);
 
+  explicit FeatureTracking(
+      const aslam::NCamera::Ptr& camera_system, bool Isimu);
+
   bool trackSynchronizedNFrameImuCallback(
       const vio::SynchronizedNFrameImu::Ptr& synced_nframe_imu);
 
@@ -39,6 +42,7 @@ class FeatureTracking {
 
   const aslam::NCamera::Ptr camera_system_;
   const vi_map::Imu imu_sensor_;
+  bool Isimu_;
 
   Eigen::Matrix<double, 6, 1> current_imu_bias_;
   int64_t current_imu_bias_timestamp_nanoseconds_;

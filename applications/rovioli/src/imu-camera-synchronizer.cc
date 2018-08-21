@@ -1,7 +1,10 @@
 #include "rovioli/imu-camera-synchronizer.h"
+#include "../include/rovioli/imu-camera-synchronizer.h"
 
 #include <aslam/pipeline/visual-pipeline-null.h>
 #include <maplab-common/conversions.h>
+
+#include <iostream>
 
 DEFINE_int64(
     vio_nframe_sync_tolerance_ns, 500000,
@@ -34,7 +37,7 @@ ImuCameraSynchronizer::ImuCameraSynchronizer(
 
   // Initialize the pipeline.
   static constexpr bool kCopyImages = false;
-  std::vector<aslam::VisualPipeline::Ptr> mono_pipelines;
+  std::vector<aslam::VisualPipeline::Ptr> mono_pipelines; //初始化了一个visualpipeline的对象的数组，下面还根据相机个数初始化了aslam::NullVisualPipeline塞进mono_pipelines
   for (size_t camera_idx = 0; camera_idx < camera_system_->getNumCameras();
        ++camera_idx) {
     mono_pipelines.emplace_back(
@@ -47,15 +50,59 @@ ImuCameraSynchronizer::ImuCameraSynchronizer(
   visual_pipeline_.reset(
       new aslam::VisualNPipeline(
           kNumThreads, mono_pipelines, camera_system_, camera_system_,
-          kNFrameToleranceNs));
+          kNFrameToleranceNs));//visual_pipeline_为aslam::VisualNPipeline::UniquePtr，用mono_pipelines来初始化这个类变量
 
   imu_buffer_.reset(
       new vio_common::ImuMeasurementBuffer(kImuBufferLengthNanoseconds));
 
-  check_if_messages_are_incomfing_thread_ = std::thread(
+  check_if_messages_are_incomfing_thread_ = std::thread(//开启了两个线程
       &ImuCameraSynchronizer::checkIfMessagesAreIncomingWorker, this);
   process_thread_ =
       std::thread(&ImuCameraSynchronizer::processDataThreadWorker, this);
+}
+
+/*只读入图像，不用imu数据（change:7）*/
+ImuCameraSynchronizer::ImuCameraSynchronizer(
+        const aslam::NCamera::Ptr& camera_system, bool Isimu)
+        : camera_system_(camera_system),
+          Isimu_(Isimu),
+          kImuBufferLengthNanoseconds(aslam::time::seconds(30u)),
+          frame_skip_counter_(0u),
+          previous_nframe_timestamp_ns_(-1),
+          min_nframe_timestamp_diff_ns_(
+                  kSecondsToNanoSeconds /
+                  FLAGS_vio_nframe_sync_max_output_frequency_hz),
+          initial_sync_succeeded_(false),
+          shutdown_(false),
+          time_last_camera_message_received_or_checked_ns_(
+                  aslam::time::nanoSecondsSinceEpoch()) {
+  CHECK(camera_system_ != nullptr);
+  CHECK_GT(FLAGS_vio_nframe_sync_max_output_frequency_hz, 0.);
+
+  // Initialize the pipeline.
+  static constexpr bool kCopyImages = false;
+  std::vector<aslam::VisualPipeline::Ptr> mono_pipelines; //初始化了一个visualpipeline的对象的数组，下面还根据相机个数初始化了aslam::NullVisualPipeline塞进mono_pipelines
+  for (size_t camera_idx = 0; camera_idx < camera_system_->getNumCameras();
+       ++camera_idx) {
+    mono_pipelines.emplace_back(
+            new aslam::NullVisualPipeline(
+                    camera_system_->getCameraShared(camera_idx), kCopyImages));
+  }
+
+  const int kNFrameToleranceNs = FLAGS_vio_nframe_sync_tolerance_ns;
+  constexpr size_t kNumThreads = 1u;
+  visual_pipeline_.reset(
+          new aslam::VisualNPipeline(
+                  kNumThreads, mono_pipelines, camera_system_, camera_system_,
+                  kNFrameToleranceNs));//visual_pipeline_为aslam::VisualNPipeline::UniquePtr，用mono_pipelines来初始化这个类变量
+
+ // imu_buffer_.reset(
+  //        new vio_common::ImuMeasurementBuffer(kImuBufferLengthNanoseconds));
+
+  //check_if_messages_are_incomfing_thread_ = std::thread(//开启了两个线程
+ //         &ImuCameraSynchronizer::checkIfMessagesAreIncomingWorker, this);
+  process_thread_ =
+          std::thread(&ImuCameraSynchronizer::processDataThreadWorker, this);
 }
 
 ImuCameraSynchronizer::~ImuCameraSynchronizer() {
@@ -96,6 +143,7 @@ void ImuCameraSynchronizer::checkIfMessagesAreIncomingWorker() {
       return;
     }
 
+    //如果message（包括imu和image）的间隔如果超过kMaxTimeBeforeWarningNs，就会送出警告
     const int64_t current_time_ns = aslam::time::nanoSecondsSinceEpoch();
     LOG_IF(
         WARNING,
@@ -148,64 +196,68 @@ void ImuCameraSynchronizer::processDataThreadWorker() {
       continue;
     }
 
+
     vio::SynchronizedNFrameImu::Ptr new_imu_nframe_measurement(
         new vio::SynchronizedNFrameImu);
     new_imu_nframe_measurement->nframe = new_nframe;
 
+    //上面是获取了图像数据，数据存储在了new_nframe中，
     // Wait for the required IMU data.
-    CHECK(aslam::time::isValidTime(previous_nframe_timestamp_ns_));
-    const int64_t kWaitTimeoutNanoseconds = aslam::time::milliseconds(50);
-    vio_common::ImuMeasurementBuffer::QueryResult result;
-    bool skip_frame = false;
-    while ((result = imu_buffer_->getImuDataInterpolatedBordersBlocking(
+    if(Isimu_) {
+        std::cerr << "imu-camera-sychronizer.cc :205 "<< "synchronizer accept IMU messages"<<std::endl;
+        CHECK(aslam::time::isValidTime(previous_nframe_timestamp_ns_));
+        const int64_t kWaitTimeoutNanoseconds = aslam::time::milliseconds(50);
+        vio_common::ImuMeasurementBuffer::QueryResult result;//是一个枚举的对象
+        bool skip_frame = false;
+        while ((result = imu_buffer_->getImuDataInterpolatedBordersBlocking(
                 previous_nframe_timestamp_ns_, current_frame_timestamp_ns,
                 kWaitTimeoutNanoseconds,
                 &new_imu_nframe_measurement->imu_timestamps,
                 &new_imu_nframe_measurement->imu_measurements)) !=
-           vio_common::ImuMeasurementBuffer::QueryResult::kDataAvailable) {
-      if (result ==
-          vio_common::ImuMeasurementBuffer::QueryResult::kQueueShutdown) {
-        // Shutdown.
-        return;
-      }
-      if (result ==
-          vio_common::ImuMeasurementBuffer::QueryResult::kDataNeverAvailable) {
-        LOG(ERROR) << "Camera/IMU data out-of-order. This might be okay during "
-                      "initialization.";
-        CHECK(!initial_sync_succeeded_)
-            << "Some synced IMU-camera frames were"
-            << "already published. This will lead to map inconsistency.";
+               vio_common::ImuMeasurementBuffer::QueryResult::kDataAvailable) {
+            if (result ==
+                vio_common::ImuMeasurementBuffer::QueryResult::kQueueShutdown) {
+                // Shutdown.
+                return;
+            }
+            if (result ==
+                vio_common::ImuMeasurementBuffer::QueryResult::kDataNeverAvailable) {
+                LOG(ERROR) << "Camera/IMU data out-of-order. This might be okay during "
+                        "initialization.";
+                CHECK(!initial_sync_succeeded_)
+                        << "Some synced IMU-camera frames were"
+                        << "already published. This will lead to map inconsistency.";
 
-        // Skip this frame, but also advanced the previous frame timestamp.
-        previous_nframe_timestamp_ns_ = current_frame_timestamp_ns;
-        skip_frame = true;
-        break;
-      }
+                // Skip this frame, but also advanced the previous frame timestamp.
+                previous_nframe_timestamp_ns_ = current_frame_timestamp_ns;
+                skip_frame = true;
+                break;
+            }
 
-      if (result ==
-          vio_common::ImuMeasurementBuffer::QueryResult::kDataNotYetAvailable) {
-        LOG(WARNING) << "NFrame-IMU synchronization timeout. IMU measurements "
-                     << "lag behind. Dropping this nframe.";
-        // Skip this frame.
-        skip_frame = true;
-        break;
-      }
+            if (result ==
+                vio_common::ImuMeasurementBuffer::QueryResult::kDataNotYetAvailable) {
+                LOG(WARNING) << "NFrame-IMU synchronization timeout. IMU measurements "
+                             << "lag behind. Dropping this nframe.";
+                // Skip this frame.
+                skip_frame = true;
+                break;
+            }
 
-      if (result == vio_common::ImuMeasurementBuffer::QueryResult::
-                        kTooFewMeasurementsAvailable) {
-        LOG(WARNING) << "NFrame-IMU synchronization: Too few IMU measurements "
-                     << "available between the previous and current nframe. "
-                     << "Dropping this nframe.";
-        // Skip this frame.
-        skip_frame = true;
-        break;
-      }
+            if (result == vio_common::ImuMeasurementBuffer::QueryResult::
+            kTooFewMeasurementsAvailable) {
+                LOG(WARNING) << "NFrame-IMU synchronization: Too few IMU measurements "
+                             << "available between the previous and current nframe. "
+                             << "Dropping this nframe.";
+                // Skip this frame.
+                skip_frame = true;
+                break;
+            }
+        }
+
+        if (skip_frame) {
+            continue;
+        }
     }
-
-    if (skip_frame) {
-      continue;
-    }
-
     previous_nframe_timestamp_ns_ = current_frame_timestamp_ns;
     // Manually unlock the mutex as the previous nframe timestamp can be
     // consumed by the next iteration.
@@ -221,9 +273,64 @@ void ImuCameraSynchronizer::processDataThreadWorker() {
              callback : nframe_callbacks_) {
       callback(new_imu_nframe_measurement);
     }
+    std::cerr << "imu-camera-sychronizer.cc :276 "<< "new_imu_nframe_measurement has been published!"<<std::endl;
   }
 }
 
+/*
+    void ImuCameraSynchronizer::processDataThreadWorker(bool Isimu) {
+        while (!shutdown_) {
+            aslam::VisualNFrame::Ptr new_nframe;
+            if (!visual_pipeline_->getNextBlocking(&new_nframe)) {
+                // Shutdown.
+                return;
+            }
+
+            // Block the previous nframe timestamp so that no other thread can use it.
+            // It should wait till this iteration is done.
+            std::unique_lock<std::mutex> lock(m_previous_nframe_timestamp_ns_);
+
+            // Drop few first nframes as there might have incomplete IMU data.
+            const int64_t current_frame_timestamp_ns =
+                    new_nframe->getMinTimestampNanoseconds();
+            if (frame_skip_counter_ < kFramesToSkipAtInit) {
+                ++frame_skip_counter_;
+                previous_nframe_timestamp_ns_ = current_frame_timestamp_ns;
+                continue;
+            }
+
+            // Throttle the output rate of VisualNFrames to reduce the rate of which
+            // the following nodes are running (e.g. tracker).
+            CHECK_GE(previous_nframe_timestamp_ns_, 0);
+            if (new_nframe->getMinTimestampNanoseconds() -
+                previous_nframe_timestamp_ns_ <
+                min_nframe_timestamp_diff_ns_) {
+                continue;
+            }
+
+
+            vio::SynchronizedNFrameImu::Ptr new_imu_nframe_measurement(
+                    new vio::SynchronizedNFrameImu);
+            new_imu_nframe_measurement->nframe = new_nframe;
+
+            previous_nframe_timestamp_ns_ = current_frame_timestamp_ns;
+            // Manually unlock the mutex as the previous nframe timestamp can be
+            // consumed by the next iteration.
+            lock.unlock();
+
+            // All the synchronization succeeded so let's mark we will publish
+            // the frames now. Any IMU data drops after this point mean that the map
+            // is inconsistent.
+            initial_sync_succeeded_ = true;
+
+            std::lock_guard<std::mutex> callback_lock(m_nframe_callbacks_);
+            for (const std::function<void(const vio::SynchronizedNFrameImu::Ptr&)>&
+                    callback : nframe_callbacks_) {
+                callback(new_imu_nframe_measurement);
+            }
+        }
+    }
+*/
 void ImuCameraSynchronizer::registerSynchronizedNFrameImuCallback(
     const std::function<void(const vio::SynchronizedNFrameImu::Ptr&)>&
         callback) {

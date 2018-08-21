@@ -1,6 +1,7 @@
 #include "rovioli/rovioli-node.h"
 
 #include <string>
+#include <iostream>
 
 #include <aslam/cameras/ncamera.h>
 #include <localization-summary-map/localization-summary-map.h>
@@ -37,8 +38,8 @@ RovioliNode::RovioliNode(
   // TODO(schneith): At the moment we need to provide two noise sigmas; one for
   // maplab and one for ROVIO. Unify this.
   datasource_flow_.reset(
-      new DataSourceFlow(*camera_system, *maplab_imu_sensor));
-  datasource_flow_->attachToMessageFlow(flow);
+      new DataSourceFlow(*camera_system, *maplab_imu_sensor));//
+  datasource_flow_->attachToMessageFlow(flow);//将flow中image和imu的message_flow_topics::IMAGE_MEASUREMENTS信息存储在了datasource_flow_的_callbacks_数组中
 
   rovio_flow_.reset(new RovioFlow(*camera_system, rovio_imu_sigmas));
   rovio_flow_->attachToMessageFlow(flow);
@@ -83,6 +84,66 @@ RovioliNode::RovioliNode(
   datasource_flow_->registerEndOfDataCallback(
       [&]() { is_datasource_exhausted_.store(true); });
 }
+
+/*只读入图像，不用imu数据（change:0）*/
+    RovioliNode::RovioliNode(
+            const aslam::NCamera::Ptr& camera_system,
+            const std::string& save_map_folder,
+            const summary_map::LocalizationSummaryMap* const localization_map,
+            message_flow::MessageFlow* flow)
+            : is_datasource_exhausted_(false) {
+      // localization_summary_map is optional and can be a nullptr.
+      CHECK(camera_system);
+      CHECK_NOTNULL(flow);
+
+      // TODO(schneith): At the moment we need to provide two noise sigmas; one for
+      // maplab and one for ROVIO. Unify this.
+      datasource_flow_.reset(
+              new DataSourceFlow(*camera_system));//
+      bool Isimu = false;
+      datasource_flow_->attachToMessageFlow(flow, Isimu);//将flow中image和imu的message_flow_topics::IMAGE_MEASUREMENTS信息存储在了datasource_flow_的_callbacks_数组中
+
+      const bool localization_enabled = localization_map != nullptr;
+      if (FLAGS_rovioli_run_map_builder || localization_enabled) {
+        // If there's no localization and no map should be built, no maplab feature
+        // tracking is needed.
+        if (localization_enabled) {
+          constexpr bool kVisualizeLocalization = true;
+          localizer_flow_.reset(
+                  new LocalizerFlow(*localization_map, kVisualizeLocalization));
+          localizer_flow_->attachToMessageFlow(flow);
+        }
+
+        // Launch the synchronizer after the localizer because creating the
+        // localization database can take some time. This can cause the
+        // synchronizer's detection of missing image or IMU measurements to fire
+        // early.
+        synchronizer_flow_.reset(new ImuCameraSynchronizerFlow(camera_system, Isimu));
+        synchronizer_flow_->attachToMessageFlow(flow, Isimu);
+
+        tracker_flow_.reset(
+                new FeatureTrackingFlow(camera_system,Isimu));
+        tracker_flow_->attachToMessageFlow(flow,Isimu);
+
+        throttler_flow_.reset(new SyncedNFrameThrottlerFlow);
+        throttler_flow_->attachToMessageFlow(flow);
+      }
+
+      data_publisher_flow_.reset(new DataPublisherFlow);
+      data_publisher_flow_->attachToMessageFlow(flow);
+
+
+    //   if (FLAGS_rovioli_run_map_builder) {
+    //     map_builder_flow_.reset(
+    //             new MapBuilderFlow(
+    //                     camera_system, std::move(maplab_imu_sensor), save_map_folder));
+    //     map_builder_flow_->attachToMessageFlow(flow);
+    //   }
+
+      // Subscribe to end of days signal from the datasource.
+      datasource_flow_->registerEndOfDataCallback(
+              [&]() { is_datasource_exhausted_.store(true); });
+    }
 
 RovioliNode::~RovioliNode() {
   shutdown();

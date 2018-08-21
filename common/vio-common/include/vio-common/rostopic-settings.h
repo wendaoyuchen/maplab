@@ -18,6 +18,8 @@ namespace vio_common {
 
 struct RosTopicSettings {
   RosTopicSettings(const aslam::NCamera& camera_system, const vi_map::Imu& imu);
+  /*只读入图像，不用imu数据（change:3）*/
+  explicit RosTopicSettings(const aslam::NCamera& camera_system);
   explicit RosTopicSettings(const vi_map::SensorManager& sensor_manager);
 
   // List of camera ROS topics. Topic list order matches the calibration
@@ -42,6 +44,9 @@ struct RosTopicSettings {
 
   void makeAbsoluteTopics();
 };
+
+
+
 
 }  // namespace vio_common
 

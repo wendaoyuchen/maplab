@@ -2,6 +2,7 @@
 
 #include <maplab-common/file-logger.h>
 #include <minkindr_conversions/kindr_msg.h>
+#include <iostream>
 
 DEFINE_double(
     map_publish_interval_s, 2.0,
@@ -76,6 +77,7 @@ void DataPublisherFlow::attachToMessageFlow(message_flow::MessageFlow* flow) {
       [&](const vio::LocalizationResult::ConstPtr& localization) {
         CHECK(localization != nullptr);
         localizationCallback(localization->T_G_I_lc_pnp.getPosition());
+        std::cerr << localization->T_G_I_lc_pnp <<std::endl;
       });
 
   flow->registerSubscriber<message_flow_topics::ROVIO_ESTIMATES>(

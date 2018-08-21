@@ -8,6 +8,8 @@
 #include "rovioli/flow-topics.h"
 #include "rovioli/localizer.h"
 
+#include <iostream>
+
 namespace rovioli {
 
 class LocalizerFlow {
@@ -33,10 +35,13 @@ class LocalizerFlow {
         [publish_result,
          this](const vio::SynchronizedNFrameImu::ConstPtr& nframe_imu) {
           CHECK(nframe_imu);
+          std::cerr << "localizer-flow.h:33 "<<"localizer-flow has accepted the nframe_imu"<<std::endl;
           vio::LocalizationResult::Ptr loc_result(new vio::LocalizationResult);
           const bool success = this->localizer_.localizeNFrame(
               nframe_imu->nframe, loc_result.get());
           if (success) {
+            std::cerr << "localizer-flow.h:33 "<<"localizer-flow has published the nframe_imu"<<std::endl;
+            std::cerr <<  loc_result->T_G_I_lc_pnp <<std::endl;
             publish_result(loc_result);
           }
         });

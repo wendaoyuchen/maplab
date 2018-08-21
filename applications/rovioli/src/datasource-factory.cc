@@ -45,4 +45,25 @@ DataSource* createAndConfigureDataSourcefromGFlags(
   }
   return nullptr;
 }
+
+/*只读入图像，不用imu数据（change:2）*/
+DataSource* createAndConfigureDataSourcefromGFlags(
+        const aslam::NCamera& camera_system) {
+  const vio_common::RosTopicSettings topic_settings(camera_system);
+  const DataSourceType source_type = stringToDataSource(FLAGS_datasource_type);
+  switch (source_type) {
+    case DataSourceType::kRosBag:
+      CHECK(!FLAGS_datasource_rosbag.empty());
+          CHECK(common::fileExists(FLAGS_datasource_rosbag));
+          return new DataSourceRosbag(FLAGS_datasource_rosbag, topic_settings);
+          break;
+    case DataSourceType::kRosTopic:
+      return new DataSourceRostopic(topic_settings);
+          break;
+    default:
+      LOG(FATAL);
+          break;
+  }
+  return nullptr;
+}
 }  // namespace rovioli

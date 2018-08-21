@@ -1,6 +1,7 @@
 #ifndef ROVIOLI_DATASOURCE_FLOW_H_
 #define ROVIOLI_DATASOURCE_FLOW_H_
 #include <memory>
+#include <iostream>
 
 #include <aslam/cameras/ncamera.h>
 #include <message-flow/message-flow.h>
@@ -18,7 +19,14 @@ class DataSourceFlow {
   explicit DataSourceFlow(
       const aslam::NCamera& camera_system, const vi_map::Imu& imu_sensor) {
     datasource_.reset(
-        createAndConfigureDataSourcefromGFlags(camera_system, imu_sensor));
+            createAndConfigureDataSourcefromGFlags(camera_system, imu_sensor));
+    CHECK(datasource_);
+  }
+/*只读入图像，不用imu数据（change:1）*/
+  explicit DataSourceFlow(
+          const aslam::NCamera& camera_system) {
+    datasource_.reset(
+            createAndConfigureDataSourcefromGFlags(camera_system));
     CHECK(datasource_);
   }
 
@@ -29,9 +37,22 @@ class DataSourceFlow {
   void attachToMessageFlow(message_flow::MessageFlow* flow) {
     CHECK_NOTNULL(flow);
     datasource_->registerImageCallback(
-        flow->registerPublisher<message_flow_topics::IMAGE_MEASUREMENTS>());
+            flow->registerPublisher<message_flow_topics::IMAGE_MEASUREMENTS>());//函数原型：void register##SENSOR_NAME##Callback（datasource.h）
     datasource_->registerImuCallback(
-        flow->registerPublisher<message_flow_topics::IMU_MEASUREMENTS>());
+            flow->registerPublisher<message_flow_topics::IMU_MEASUREMENTS>());
+  }
+
+  /*只读入图像，不用imu数据（change:5）*/
+  void attachToMessageFlow(message_flow::MessageFlow* flow, bool Isimu) {
+    CHECK_NOTNULL(flow);
+    datasource_->registerImageCallback(
+        flow->registerPublisher<message_flow_topics::IMAGE_MEASUREMENTS>());//函数原型：void register##SENSOR_NAME##Callback（datasource.h）
+    if(Isimu){
+        std::cerr << "datasource-flow.h :50 "<< "datasource accept IMU messages"<<std::endl;
+        datasource_->registerImuCallback(
+                flow->registerPublisher<message_flow_topics::IMU_MEASUREMENTS>());
+    }
+
   }
 
   void startStreaming() {

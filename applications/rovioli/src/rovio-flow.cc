@@ -85,8 +85,8 @@ RovioFlow::RovioFlow(
       id, active_T_C_Bs, active_cameras, "Cameras active for motion tracking.");
 
   // Construct ROVIO interface using only the active cameras.
-  rovio_interface_.reset(
-      constructAndConfigureRovio(motion_tracking_ncamera, imu_sigmas));
+  rovio_interface_.reset(//std::unique_ptr::reset是用来替换被管理对象的
+      constructAndConfigureRovio(motion_tracking_ncamera, imu_sigmas));//reset里面的函数是在rovio-factory.cc里定义的
   rovio_interface_->setEnablePatchUpdateOutput(false);
   rovio_interface_->setEnableFeatureUpdateOutput(false);
 }
@@ -109,7 +109,7 @@ void RovioFlow::attachToMessageFlow(message_flow::MessageFlow* flow) {
         // Do not apply the predictions but only queue them. They will be
         // applied before the next update.
         const bool measurement_accepted =
-            this->rovio_interface_->processImuUpdate(
+            this->rovio_interface_->processImuUpdate(//这个函数的定义是在RovioInterfaceImplInl.hpp中，因为rovio_interface的类里面定义的都是虚函数
                 imu->imu_data.head<3>(), imu->imu_data.tail<3>(),
                 aslam::time::to_seconds(imu->timestamp),
                 FLAGS_rovio_update_filter_on_imu);
@@ -128,6 +128,8 @@ void RovioFlow::attachToMessageFlow(message_flow::MessageFlow* flow) {
           return;
         }
 
+        //rovio_interface_定义于rovio-flow.h，类型为rovio::RovioInterface
+        //processImageUpdate在RovioInterface里是一个纯虚函数，有个具体定义是在RovioInterfaceImplInl.hpp中
         const bool measurement_accepted =
             this->rovio_interface_->processImageUpdate(
                 image->camera_index, image->image,

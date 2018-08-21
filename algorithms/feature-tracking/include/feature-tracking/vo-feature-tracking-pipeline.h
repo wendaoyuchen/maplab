@@ -41,6 +41,7 @@ class VOFeatureTrackingPipeline : public FeatureTrackingPipeline {
       aslam::FrameToFrameMatches* inlier_matches_kp1_k,
       aslam::FrameToFrameMatches* outlier_matches_kp1_k);
 
+    bool Isimu_;
   aslam::NCamera::ConstPtr ncamera_;
   /// Keypoint detector and descriptor extractors that detect keypoints in each
   /// frame and compute a descriptor for each one of them.

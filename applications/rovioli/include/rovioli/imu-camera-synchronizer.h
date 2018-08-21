@@ -22,6 +22,7 @@ class ImuCameraSynchronizer {
   ImuCameraSynchronizer() = delete;
 
   explicit ImuCameraSynchronizer(const aslam::NCamera::Ptr& camera_system);
+    explicit ImuCameraSynchronizer(const aslam::NCamera::Ptr& camera_system , bool Isimu);
 
   ~ImuCameraSynchronizer();
 
@@ -41,8 +42,10 @@ class ImuCameraSynchronizer {
  private:
   void checkIfMessagesAreIncomingWorker();
   void processDataThreadWorker();
+ // void processDataThreadWorker(bool Isimu);
 
   const aslam::NCamera::Ptr camera_system_;
+  bool Isimu_;
 
   aslam::VisualNPipeline::UniquePtr visual_pipeline_;
   vio_common::ImuMeasurementBuffer::UniquePtr imu_buffer_;

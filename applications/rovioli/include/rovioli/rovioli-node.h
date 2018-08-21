@@ -27,6 +27,12 @@ class RovioliNode final {
       const std::string& save_map_folder,
       const summary_map::LocalizationSummaryMap* const localization_map,
       message_flow::MessageFlow* flow);
+
+  RovioliNode(
+          const aslam::NCamera::Ptr& camera_system,
+          const std::string& save_map_folder,
+          const summary_map::LocalizationSummaryMap* const localization_map,
+          message_flow::MessageFlow* flow);
   ~RovioliNode();
 
   void start();

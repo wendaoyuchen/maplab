@@ -17,5 +17,11 @@ DataSourceType stringToDataSource(const std::string& str);
 // ownership!
 DataSource* createAndConfigureDataSourcefromGFlags(
     const aslam::NCamera& camera_system, const vi_map::Imu& imu_sensor);
+
+    DataSource* createAndConfigureDataSourcefromGFlags(
+            const aslam::NCamera& camera_system);
 }  // namespace rovioli
+
+
+
 #endif  // ROVIOLI_DATASOURCE_FACTORY_H_

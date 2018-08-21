@@ -36,6 +36,26 @@ RosTopicSettings::RosTopicSettings(
   }
 }
 
+/*只读入图像，不用imu数据（change:4）*/
+RosTopicSettings::RosTopicSettings(
+        const aslam::NCamera& camera_system)
+        : imu_topic(""),
+          camera_topic_suffix(FLAGS_vio_camera_topic_suffix),
+          absolute_pose_topic(""),
+          hardware_features_topic(FLAGS_vio_hardware_features_topic),
+          gps_wgs_topic(""),
+          gps_utm_topic("") {
+  CHECK(imu_topic.empty());
+  for (size_t cam_idx = 0u; cam_idx < camera_system.getNumCameras();
+       ++cam_idx) {
+    camera_topic_cam_index_map.emplace(
+            std::make_pair(
+                    camera_system.getCameraShared(cam_idx)->getLabel() +
+                    camera_topic_suffix,
+                    cam_idx));
+  }
+}
+
 RosTopicSettings::RosTopicSettings(const vi_map::SensorManager& sensor_manager)
     : imu_topic(""),
       camera_topic_suffix(FLAGS_vio_camera_topic_suffix),
